@@ -1,0 +1,294 @@
+//
+// The beginnings of a Roguelike for the C64 in Milford
+//
+
+import stdio
+
+import random
+import c64_vic
+import c64_cia
+
+
+array screen[1000] @$0400
+
+const byte MAP_WIDTH=160
+const byte MAP_HEIGHT=96
+array map[MAP_WIDTH*MAP_HEIGHT]	//4x4 screens
+
+const byte SCREEN_WIDTH=40
+const byte SCREEN_HEIGHT=24
+const byte X_MAX=MAP_WIDTH-(SCREEN_WIDTH/2)
+const byte Y_MAX=MAP_HEIGHT-(SCREEN_HEIGHT/2)
+
+const byte EMPTY=32
+const byte PATH=130
+
+int16 WAIT_TIME=2000
+
+
+void main() {
+	
+	signed16 x,y
+	bool running
+	byte key
+	byte i
+	
+	x=0
+	y=0
+	running=true
+	
+	init_rand_seed()
+	
+	clear_map(32)
+	
+	//vic_bg_color0=black
+	init_charset()
+	
+	
+	//set_screen_loc(14,12)
+	
+	charout($05)	//WHITE
+	charout($0E)	//UPPER
+	charout($08)	//LOCK UPPER/LOWER
+	
+	//test_get_random_word()
+	//while (true){}
+	
+	fill_map_rect(0,0,MAP_WIDTH,MAP_HEIGHT,32)
+	//fill_map_rect(1,1,MAP_WIDTH-2,MAP_HEIGHT-2,32)
+	draw_map_rect(0,0,MAP_WIDTH,MAP_HEIGHT,160)
+	for i,0,to,20 {
+		draw_map_rect(lo(get_random_word(MAP_HEIGHT/4)),lo(get_random_word(MAP_WIDTH/4)),
+			lo(get_random_word(MAP_HEIGHT)),lo(get_random_word(MAP_WIDTH)),130)
+		
+	}
+	
+
+	clear_screen(dark_grey,160)
+	
+	while (running) {
+
+		draw_map(y,x,1,0,40,23)
+
+		set_screen_loc(15,0)
+		putstrz("x="z)
+		putword(x)
+		putstrz(" y="z)
+		putword(y)
+		
+		key=get_char()
+		if (key==$9d) {			//LEFT
+			vic_border=yellow
+			x-=1
+			if (x < 0) {
+				x=0
+			}
+		}
+		else if (key==$1d) {	//RIGHT
+			vic_border=blue
+			x+=1
+			if (x >= X_MAX) {
+				x = X_MAX
+			}
+		}
+		else if (key==$91) {	//UP
+			vic_border=red
+			y -= 1;
+			if (y < 0) {
+				y=0
+			}
+		}
+		else if (key==$11) {	//DOWN
+			vic_border=green
+			y += 1;
+			if (y>Y_MAX) {
+				y=Y_MAX
+			}
+		}
+		else {
+			vic_border=key
+		}
+		
+	}
+	
+}
+
+void clear_map(byte byteval) {
+	word i
+	for i,0,to,map.lastindex {
+		map[i]=byteval
+	}
+}
+
+void set_map(byte map_row, byte map_col, byte byteval) {
+	//map[(map_row*MAP_WIDTH)+map_col]=byteval
+	map[get_map_index(map_row,map_col)]=byteval
+}
+
+void fill_map_rect(byte start_row, byte start_col, byte height, byte width, byte byteval) {
+	byte row,col
+	byte end_row,end_col
+	byte map_index
+	
+	end_row=start_row+height
+	end_col=start_col+width
+	
+	for row,start_row,to,end_row {
+		//map_index=row*MAP_WIDTH+start_col
+		for col,start_col,to,end_col {
+			//map_index += 1
+			//map[map_index]=byteval
+			map[get_map_index(row,col)]=byteval
+		}
+	}
+}
+
+inline void draw_map_rect(byte start_row,byte start_col, byte width, byte height, byte byteval){
+	byte row,col
+	byte end_row,end_col
+	byte map_index
+	
+	end_row=start_row+height
+	end_col=start_col+width
+
+	for col,start_col,to,end_col {
+			map[get_map_index(0,col)]=byteval
+			map[get_map_index(end_row,col)]=byteval
+	}
+	for row,start_row,to,end_row{
+			map[get_map_index(row,0)]=byteval
+			map[get_map_index(row,end_col)]=byteval
+	}
+}
+
+inline word get_map_index(word map_row, word map_col) {
+	return (map_row*MAP_WIDTH)+map_col
+}
+
+inline word get_screen_index(word screen_row,word screen_col) {
+	return (screen_row*SCREEN_WIDTH)+screen_col
+}
+
+void draw_map(signed16 map_row, signed16 map_col, byte screen_row, byte screen_col, byte width, byte height) {
+
+	byte row,col
+	word map_index,screen_index,map_row_index,screen_row_index
+	
+	for row,0,to,height {
+		map_row_index=(map_row+row)*MAP_WIDTH
+		screen_row_index=(screen_row+row)*SCREEN_WIDTH
+		
+		for col,0,to,width {
+			map_index=get_map_index(map_row+row,map_col+col)    //map_row_index + map_col + col //map_row_index+col
+			screen_index=get_screen_index(screen_row+row,screen_col+col)// screen_row_index + screen_col + col //   screen_row_index+col
+			screen[screen_index]=map[map_index]
+		}
+	}
+}
+
+void wait(word n) {
+	word w
+	for w,0,to,n {
+		//vic_border+=1
+	}
+}
+
+void clear_screen(byte color, byte char) {
+	word i;
+	for i,0,paralleluntil,1000 {
+		screen[i]=char
+		c64_color_ram[i]=color
+	}
+}
+
+asm void set_screen_loc(byte a, byte x){
+	TAY
+	CLC
+	JSR $fff0
+	RTS
+}
+
+asm void charout(byte char) {
+	LDA char
+	JSR $ffd2
+	rts
+}
+
+byte get_char() {
+	byte result
+	asm {
+		JSR $f13e	//GETIN
+		STA result
+	}
+	return result
+}
+
+void test_get_index()
+{
+	putstrz("MAP_WIDTH,MAP_HEIGHT="z)
+	putword(MAP_WIDTH)
+	putchar(',')
+	putword(MAP_HEIGHT)
+	new_line()
+	
+	putstrz("map-index(0,0)="z)
+	putword(get_map_index(0,0))
+	new_line()
+	
+	putstrz("map-index(8,8)="z)
+	putword(get_map_index(8,8))
+	new_line()
+	putword(word(8)*word(160))
+	new_line()
+	
+	putstrz("map-index(12,0)="z)
+	putword(get_map_index(12,0))
+	new_line()
+	
+	putstrz("map-index(0,40)="z)
+	putword(get_map_index(0,40))
+	new_line()
+
+}
+
+void test_get_random_word() {
+	byte i
+	putstrz("here are the random numbers:"z)
+	new_line()
+	
+	for i,0,to,50 {
+		putword(get_random_word(100))
+		new_line()
+		
+	}
+	
+}
+
+word get_random_word(word max) {
+	byte rand1,rand2
+	word bigrand
+	
+	rand1=rand()
+	rand2=rand()
+	bigrand=rand1+(rand2*256)
+	bigrand = bigrand %% max
+	return bigrand
+}
+
+void init_charset() {
+	//vic_mem=vic_mem & %11000000 + (12*256)	//point VIC charset pointer to $3000
+	//vic_bank_C000()
+
+	
+	vic_charset_3800()							//point VIC charset pointer to $c000+0000=$c000
+	vic_enable_multicolor()
+	//vic_bgcolor0=black
+	set_bg_color(black)
+	vic_bg_color1=brown
+	vic_bg_color2=dark_grey
+	
+	
+}
+
+//segment(chrrom) 
+const array charset @ $3800 = file("dungeon-multi-charset.bin", 0)

@@ -1,0 +1,863 @@
+//
+// The beginnings of a Roguelike for the C64 in Milford
+//
+
+// java -jar c:\Users\chris\millfork-0.3.22\millfork.jar Roguelike.mfk  -s -g -Wall -fsource-in-asm -fsource-in-asm -fbounds-checking -flenient-encoding -foptimize-stdlib -Ob -Wall  -o Roguelike -t c64
+// C:\Users\chris\WinVice\GTK3VICE-3.4-win64-r37388\x64sc.exe 'C:\Users\chris\Projects\Millfork\Roguelike\Roguelike.prg'
+
+const byte CBM_64_COMPAT=1
+
+import stdio
+import random
+import c64_hardware
+
+const bool IGNORE_WALLS=false
+
+array(byte) screen[1000] @$0400
+
+const byte MAP_WIDTH=100
+const byte MAP_HEIGHT=80
+array(byte) map[word(MAP_WIDTH*MAP_HEIGHT)]	//2.5x2.5 screens
+
+const byte SCREEN_WIDTH=40
+const byte SCREEN_HEIGHT=25
+const byte X_MAX=MAP_WIDTH-(SCREEN_WIDTH/2)
+const byte Y_MAX=MAP_HEIGHT-(SCREEN_HEIGHT/2)
+
+const byte EMPTY=32
+const byte PATH=130
+
+word WAIT_TIME=2000
+
+array(word) map_row_to_index[byte(MAP_HEIGHT)]
+array(word) screen_row_to_index[SCREEN_HEIGHT]
+
+byte NUM_ROOMS=40
+
+const byte WALL_TILE=130
+const byte EMPTY_TILE=32
+//const byte DUDE_BLOCK=129
+const byte UP_STAIRS_TILE=140
+const byte DOWN_STAIRS_TILE=141
+
+const byte MIN_ROOM_WIDTH=2
+const byte MIN_ROOM_HEIGHT=2
+
+const byte MAX_ROOM_WIDTH=15
+const byte MAX_ROOM_HEIGHT=15
+
+byte SPRITE0_PTR @$07f8
+
+word jiffies
+word old_irq				@$ea31
+
+byte map_col,map_row
+byte screen_col,screen_row
+
+void main() {
+
+	byte ts
+	byte old_raster
+	word new_raster
+	 
+
+
+	bool running
+	byte key
+	byte i
+	byte row,col
+	//byte next_row,next_col
+	word index
+	bool notWall
+	byte mc
+	
+	word draw_time
+
+	//row=0
+	//col=0
+	//next_row=0
+	//next_col=0
+
+	reset_player_position()
+
+	running=true
+	
+	// For some reason Millfork isn't including the correct version of this routine. So, I'm forcing it.
+	//init_rand_seed()
+	my_init_rand_seed()
+	
+
+	clear_screen(light_grey,32)	
+
+
+	//vic_bg_color0=black
+	activate_charset()
+	activate_sprites()
+	
+	
+	charout($05)	//WHITE
+	charout($0E)	//UPPER
+	charout($08)	//LOCK UPPER/LOWER
+
+	//while (true) {
+	//	key=read_WASD_keys() //get_char()
+	//	putword(key)
+	//	new_line()
+	//}
+
+	build_arrays()
+
+	//debug_fill_map()	
+	build_dungeon()
+
+	start_raster_timer()
+
+	//clear_tod_clock()
+	draw_screen(map_row,map_col)
+
+	//ts=get_tod_clock_tenth_secs()
+
+	while (running) {
+		set_screen_loc(0,0)
+		putstrz("map:x="z)
+		putword(map_col)
+		putstrz(" ,y="z)
+		putword(map_row)
+		putstrz(" draw time="z)
+		putword(draw_time)
+		//putword(tod_clock_tenth_secs)
+		//putword(tod_clock_seconds)
+		//putword(tod_clock_minutes)
+		//putword(tod_clock_hours)
+
+		putstrz(" key(wasd)="z)
+		//putchar(key)
+		//putchar(' ')
+		
+
+		key=read_WASD_keys() //get_char()
+
+		if (key != 0) {
+			
+			//screen[screen_row_to_index[y+1]+x]=DUDE_BLOCK
+			//screen[500]=DUDE_BLOCK
+			
+			//next_map_col=map_col
+			//next_map_row=map_row
+			
+			
+			//if ((key==$9d)) {			//LEFT
+			if (key == 'a' ) {
+				if(IGNORE_WALLS || (get_map_cell(map_row,map_col-1) != WALL_TILE)){	//map[map_row_to_index[map_row]+map_col-1]
+					map_col-=1
+					if (screen_col != 0) {
+						screen_col-=1
+					}
+				}
+			}
+			//else if (key==$1d) {	//RIGHT
+			else if ( key== 'd' ) {
+				if (map_col < (MAP_WIDTH-1)) {
+					if (IGNORE_WALLS || (get_map_cell(map_row,map_col+1) != WALL_TILE)) { //map[map_row_to_index[map_row]+map_col+1]
+						map_col+=1
+						if (screen_col <(SCREEN_WIDTH-1)) {
+							//vic_border=green
+							screen_col+=1
+						}
+					}
+				}
+			}
+			//else if (key==$91) {	//UP
+			else if (key== 'w' ) {
+				if (IGNORE_WALLS || (get_map_cell(map_row-1,map_col)!=WALL_TILE)) { //map[map_row_to_index[map_row-1]+map_col]
+					map_row-=1
+					if (screen_row != 0) {
+						screen_row-=1
+					}
+				}
+			}
+			//else if (key==$11) {	//DOWN
+			else if (key== 's' ) {
+				if (IGNORE_WALLS || (get_map_cell(map_row+1,map_col)!=WALL_TILE)){ //map[map_row_to_index[map_row+1]+map_col]
+					map_row+=1
+					if (screen_row<(SCREEN_HEIGHT-1)) {
+						screen_row+=1
+					}
+				}
+			}
+			else if (key==3) {		//STOP key
+				build_dungeon()
+				reset_player_position()
+				//deactivate_charset()
+				//deactivate_sprites()
+				//running=false
+			}
+
+		// draw the screen and time it in 1/60th-of-a-sec "jiffies"
+		jiffies=0
+		draw_screen(map_row,map_col)
+		draw_time=jiffies
+
+		putchar(key)
+
+		//vic_border=blue
+
+		//new_raster = vic_raster
+		//if (new_raster<=old_raster) {
+		//	new_raster+=256
+		//}
+
+		//putword(new_raster-old_raster)
+
+
+		//ts=get_tod_clock_tenth_secs()
+
+		//print_timer()
+		}	//if key!=0
+	}	//while running
+	
+}
+
+inline void reset_player_position() {
+	screen_col=0
+	screen_row=0
+	map_col=0
+	map_row=0
+}
+
+//
+//see https://www.c64-wiki.com/wiki/Keyboard
+//
+inline byte read_WASD_keys() {
+	byte col
+	byte key
+
+	key=0
+
+	deactivate_ints()
+
+	//cia1_ddra=%11111111		//CIA1 port A = outputs
+	//cia1_ddrb=%00000000		//CIA1 port B = inputs
+
+	cia1_pra=%11111101		//row 1=LSHIFT 	E 	S 	Z 	4 	A 	W 	3
+
+	col=cia1_prb			//read col1
+
+	if (col == %11111101){	//W
+		key= 'w'
+	} else if (col == %11011111) {
+		key= 's'
+	} else if (col == %11111011) {
+		key= 'a'
+	}
+	else {
+		//cia1_ddra=%11111111		//CIA1 port A = outputs
+		//cia1_ddrb=%00000000		//CIA1 port B = inputs
+
+		cia1_pra=%11111011		//row 2=X 	T 	F 	C 	6 	D 	R 	5
+		col=cia1_prb			//read col2
+		if (col == %11111011) {	//D
+			key= 'd'
+		}	//if
+		else {
+			cia1_pra=%01111111		//row 7=STOP 	Q 	C= 	SPACE 	2 	CTRL 	<- 	1 
+			col=cia1_prb
+			if (col == %1111110) {	//STOP key
+				key=3				//CTRL-c
+			}	//if col
+		}// else D
+	}	//else STOP
+
+	activate_ints()
+
+	return key
+}
+inline void draw_screen(byte map_row,byte map_col) {
+	draw_map(signed16(map_row)-(signed16(SCREEN_HEIGHT)/2)+1,signed16(map_col)-(signed16(SCREEN_WIDTH)/2),0,0,SCREEN_WIDTH,SCREEN_HEIGHT)
+	set_sprite_loc(0,(SCREEN_WIDTH/2),(SCREEN_HEIGHT/2))
+
+}
+void clear_map(byte byteval) {
+	word i
+	for i,0,to,map.lastindex {
+		map[i]=byteval
+	}
+}
+
+//
+// Draw a rectangle of random dimensions. Then draw another, overlapping the first one. Repeat.
+//
+void build_dungeon() {
+	byte i
+	byte row,col
+	signed16 r,c
+	byte width,height
+	signed16 next_col,next_row
+	byte next_width,next_height
+	signed16 offset_width,offset_height
+
+	//	clear_map(EMPTY_TILE)
+
+	fill_map_rect(0,0,MAP_HEIGHT,MAP_WIDTH,WALL_TILE)
+
+
+	width=calc_room_width()
+	height=calc_room_height()
+	
+	next_row=0
+	next_col=0
+	
+	for i,0,parallelto,NUM_ROOMS {
+
+		//draw a random-sized room at the row,col picked the last iteration
+		row=next_row.lo
+		col=next_col.lo
+		
+		width=calc_room_width()
+		if (col+width > MAP_WIDTH) {
+			width=MAP_WIDTH-col
+		}
+		height=calc_room_height()
+		if (row+height > MAP_HEIGHT) {
+			height=MAP_HEIGHT-row
+		}
+
+
+		r=row-(height/2)
+		if (r<0) {
+			r=0
+		}
+
+		c=col-(width/2)
+		if (c<0) {
+			c=0
+		}
+
+		fill_map_rect(row-(height/2),col-(width/2),height,width,EMPTY_TILE)
+
+		if (i==NUM_ROOMS) {
+			map[map_row_to_index[r.lo]+c.lo]=DOWN_STAIRS_TILE
+		}
+
+		//pick a row,col within the bounds of this room to start the next room
+
+		offset_width=(rand() %% width)
+		next_col=col+offset_width
+		if (next_col<0) {
+			next_col=0
+		}
+		if (next_col>MAP_WIDTH) {
+			next_col=MAP_WIDTH
+		}
+		
+		offset_height=(rand() %% height)
+		next_row=row+offset_height
+		if (next_row < 0) {
+			next_row=0
+		}
+		if (next_row>MAP_HEIGHT) {
+			next_row=MAP_HEIGHT
+		}
+	}	//for NUM_ROOMS
+	map[0]=UP_STAIRS_TILE
+}
+
+byte calc_room_width() {
+	return (rand()%%(MAX_ROOM_WIDTH-MIN_ROOM_WIDTH)) + MIN_ROOM_WIDTH
+}
+
+byte calc_room_height() {
+	return (rand()%%(MAX_ROOM_HEIGHT-MIN_ROOM_HEIGHT)) + MIN_ROOM_HEIGHT
+}
+
+// Fill a given rectangle in the map with the given value
+void fill_map_rect(byte start_row, byte start_col, byte height, byte width, byte byte_val) {
+	byte row,col
+	byte end_row,end_col
+	word mi
+	
+	end_row=start_row+height
+	end_col=start_col+width
+	
+	for row,start_row,parallelto,end_row {
+		mi=map_row_to_index[row]
+		for col,start_col,parallelto,end_col {
+			map[mi+col]=byte_val
+		}
+	}
+}
+
+// Outline a given rectangle in the map with the given value
+void draw_map_rect(byte start_row, byte start_col, byte height, byte width, byte byteval){
+	byte row,col
+	byte end_row,end_col
+	//byte map_row_to_index
+	
+	end_row=start_row+height
+	end_col=start_col+width
+
+	for col,start_col,parallelto,end_col {
+			map[map_row_to_index[start_row]+col]=byteval
+			map[map_row_to_index[end_row]+col]=byteval
+	}
+	for row,start_row,parallelto,end_row{
+			map[map_row_to_index[row]+start_col]=byteval
+			map[map_row_to_index[row]+end_col]=byteval
+	}
+}
+
+//
+// Fill the entire map with a matrix that looks like: 	000102030405...
+//														101112131415...
+//														202122232425...
+//														...
+void debug_fill_map() {
+	byte row,col
+	for col,0,paralleluntil,MAP_WIDTH/2 {
+		for row,0,paralleluntil,MAP_HEIGHT {
+			map[map_row_to_index[row]+col*2]=48+(row %% 10)
+			map[map_row_to_index[row]+col*2+1]=48+(col %% 10)
+		}
+	}
+}
+
+//
+//	Draw the map on the screen
+//		Parameters:
+//			map_row,map_col			the upper-left of the [width,height] rectangle to draw, in map units
+//			screen_row,screen_col	the upper-left corner of where to draw the rectangle on the screen, in screen chars
+//			width,height			the dimensions of the rectangle to draw, in map units & screen chars
+//
+inline void draw_map(signed16 map_row, signed16 map_col, byte screen_row, byte screen_col, byte width, byte height) {
+
+	byte row,col
+	word si,mri
+	byte screen_val
+	signed16 mr,mc
+	byte sr,sc
+	
+	for row,0,until,height {
+
+		mr=map_row+row
+		sr=screen_row+row
+		if (mr>=0) {
+			mri=map_row_to_index[mr.lo]		//mr should always be <$100
+		}
+		si=screen_row_to_index[sr]
+		
+		
+		for col,0,until,width {
+			screen_val=WALL_TILE
+
+			if ((mr>=0) && (mr<MAP_HEIGHT)) {
+				mc=map_col+col
+				if ((mc>=0) && (mc < MAP_WIDTH)) {
+					screen_val=map[mri+map_col+col]
+				}
+			}
+			screen[si+screen_col+col]=screen_val
+		}
+	}
+}
+
+inline byte get_map_cell(byte row, byte col) {
+	byte map_val
+
+
+	if ((row<MAP_HEIGHT) && (col < MAP_WIDTH)) {
+		map_val=map[map_row_to_index[row]+col]
+	}
+	else {
+		map_val=WALL_TILE
+	}
+	return map_val
+
+}
+
+//
+// Build index arrays that correlate a given screen or map row and the
+//	beginning index of that row in the screen or map
+//
+void build_arrays() {
+	byte i
+	for i,0,paralleluntil,MAP_HEIGHT {
+		map_row_to_index[i]=word(MAP_WIDTH)*i
+	}
+	for i,0,paralleluntil,SCREEN_HEIGHT {
+		screen_row_to_index[i]=word(SCREEN_WIDTH)*i
+	}
+}
+
+void debug_show_arrays() {
+	byte i
+	putstrz("mrti=["z)
+	for i,0,until,MAP_HEIGHT {
+		putword(map_row_to_index[i])
+		putstrz(","z)
+	}
+	putstrz("]"z)
+	new_line()
+	
+	putstrz("srti=["z)
+	for i,0,until,SCREEN_HEIGHT {
+//		screen_row_to_index[i]=SCREEN_WIDTH*i
+		putword(screen_row_to_index[i])
+		putstrz(","z)
+	}
+	putstrz("]"z)
+	new_line()
+}
+
+void wait(word n) {
+	word w
+	for w,0,to,n {
+		//vic_border+=1
+	}
+}
+
+void clear_screen(byte color, byte char) {
+	word i;
+	for i,0,paralleluntil,1000 {
+		screen[i]=char
+		c64_color_ram[i]=color
+	}
+}
+
+asm void set_screen_loc(byte a, byte x){
+	TAY
+	CLC
+	JSR $fff0
+	RTS
+}
+
+asm void charout(byte char) {
+	LDA char
+	JSR $ffd2
+	rts
+}
+
+byte get_char() {
+	byte result
+	asm {
+		JSR $f13e	//GETIN
+		STA result
+	}
+	return result
+}
+
+// void test_get_index()
+// {
+	// putstrz("MAP_WIDTH,MAP_HEIGHT="z)
+	// putword(MAP_WIDTH)
+	// putchar(',')
+	// putword(MAP_HEIGHT)
+	// new_line()
+	
+	// putstrz("map-index(0,0)="z)
+	// putword(get_map_row_to_index(0,0))
+	// new_line()
+	
+	// putstrz("map-index(8,8)="z)
+	// putword(get_map_row_to_index(8,8))
+	// new_line()
+	// putword(word(8)*word(160))
+	// new_line()
+	
+	// putstrz("map-index(12,0)="z)
+	// putword(get_map_row_to_index(12,0))
+	// new_line()
+	
+	// putstrz("map-index(0,40)="z)
+	// putword(get_map_row_to_index(0,40))
+	// new_line()
+
+// }
+
+void test_get_random_word() {
+	byte i
+	putstrz("here are the random numbers:"z)
+	new_line()
+	
+	for i,0,to,50 {
+		putword(get_random_word(100))
+		new_line()
+		
+	}
+	
+}
+
+word get_random_word(word max) {
+	byte rand1,rand2
+	word bigrand
+	
+	rand1=rand()
+	rand2=rand()
+	bigrand=rand1+(rand2*256)
+	bigrand = bigrand %% max
+	return bigrand
+}
+
+void activate_charset() {
+	//vic_mem=vic_mem & %11000000 + (12*256)	//point VIC charset pointer to $3000
+	//vic_bank_C000()
+
+	
+	vic_charset_3800()							
+	vic_enable_multicolor()
+	set_bg_color(black)
+	vic_bg_color1=brown
+	vic_bg_color2=dark_grey
+}
+
+void deactivate_charset() {
+	vic_disable_multicolor()
+	vic_charset_1000()
+}
+
+void activate_sprites() {
+	SPRITE0_PTR=$D8 //sprite 0 at $3600
+	vic_spr0_color=blue
+	vic_spr_color1=red
+	vic_spr_color2=dark_grey
+	vic_spr_ena=%00000001
+	vic_spr_mcolor=%11111111	//all sprites are multicolor
+	set_sprite_loc(1,0,0)
+}
+
+void deactivate_sprites() {
+	vic_spr_ena=0	//disable all sprites
+}
+
+void set_sprite_loc(byte sprite_num,word x, byte y) {
+	byte index
+	index=sprite_num*2
+
+	word real_x
+	byte real_y
+
+	real_x=(x*8)+24
+	real_y=((y+1)*8)+34
+
+	vic_spr_coord[index]=lo(real_x)
+	if (real_x>255) {
+		vic_spr_hi_x=1//!=(2^sprite_num)
+	}
+	else {
+		vic_spr_hi_x=0//&=255-(2^sprite_num)
+	}
+	vic_spr_coord[index+1]=real_y
+}
+
+inline void my_init_rand_seed() {
+    poke($D40E, $ff)
+    poke($D40F, $ff)
+    poke($D412, $80)
+    while vic_raster != $70 {}
+    rand_seed.hi = peek($D41B)
+    while vic_raster != $40 {}
+    rand_seed.lo = peek($D41B)
+}
+
+void putint24(int32  w) {
+    byte digits
+    byte lastdigit
+    digits = 0
+    int32 mask
+	//11223344
+
+    for mask:[40000000,4000000,400000,40000,4000,400,40,4] {
+        lastdigit = 0
+        while w >= mask {
+            w -= mask
+            lastdigit += 4
+        }
+        mask >>= 2
+        while w >= mask {
+            w -= mask
+            lastdigit += 1
+        }
+        if digits != 0 || lastdigit != 0 {
+            putchar('0' + lastdigit)
+            digits += 1
+        }
+    }
+    if digits == 0 {
+        putchar('0')
+    }
+}
+
+word timer_a_value 			@$dc04
+word timer_b_value 			@$dc06
+word timer_a_control 		@$dc0e
+word timer_b_control 		@$dc0f
+
+byte tod_clock_tenth_secs 	@$dc08
+byte tod_clock_seconds		@$dc09
+byte tod_clock_minutes		@$dc0a
+byte tod_clock_hours		@$dc0b
+
+byte interrupt_reg			@$dc0d
+
+const byte CLOCK_PM = %10000000
+
+function.void.to.void int_service_ptr 		@$0314
+
+//word tod_clock_tenth_sec	@$dc08
+//word tod_clock_
+
+void start_raster_timer() {
+	
+	asm {
+		sei
+	}
+	interrupt_reg &=%01111111
+	vic_cr1 &= %01111111
+	vic_raster=0
+	jiffies=0
+	int_service_ptr=handle_raster_interrupt.pointer
+	asm {
+		cli
+	}
+}
+
+void clear_raster_timer() {
+	vic_bg_color0=red
+
+	asm {
+		sei
+	}
+	jiffies=0
+	asm {
+		cli
+	}
+
+	vic_bg_color0=black
+}
+void handle_raster_interrupt() {
+	jiffies+=1
+	vic_irq |= %00000001	//acknowledge raster interrupt
+	asm {
+		jmp $ea31
+	}
+}
+
+void stop_raster_timer() {
+	asm {
+		sei
+	}
+	interrupt_reg |= %10000000
+	vic_cr1 |= %10000000
+	int_service_ptr=old_irq
+	asm {
+		cli
+	}
+}
+
+asm void start_timer() {
+//.locycles        .byte 0
+//.vald015         .byte 0
+//.vald011         .byte 0
+//.statusreg       .byte 0
+
+				//php             	//save st, just in case
+               // sei
+                //pla
+                //sta statusreg
+                //lda vic_cr1			//Read current raster line
+                //sta vald011
+                //lda vic_spr_ena		//Read status of sprite enabled flags
+                //sta vald015
+                ldx #$00
+                stx timer_b_control	//stop timer b (not really necessary, but still)
+
+loop:
+                dex
+                cpx vic_raster
+                bne loop         	//wait for vblank area
+                sta timer_b_value	//set to $ffff
+                stx timer_b_value+1
+                lda #$19
+
+                //cli
+
+                sta timer_b_control	//start timer b, one shot mode
+                rts
+
+}
+
+asm void print_timer() {
+
+				
+				//sei
+                lda #0
+                sta timer_a_control	//stop timer A
+                sta timer_b_control	//stop timer B
+               	//lda vald011
+               	//sta vic_cr1			//Set raster line to generate IRQ at
+                //lda vald015
+                //sta vic_spr_ena		//Turn sprites back on
+
+				//rts
+
+                cld
+                sec
+                lda #<($ffff-overhead)
+                sbc timer_a_value
+                sta cycles
+                lda #>($ffff-overhead)
+                sbc timer_a_value+1
+                sta cycles+1
+                lda #$ff
+                sbc timer_b_value
+                sta cycles+2
+                lda #$ff
+                sbc timer_b_value+1
+
+				//print out
+				ldx locycles
+                jsr $bdcd
+                lda #13
+                jsr $ffd2
+
+				//cli
+                //lda statusreg   //restore (most of) st
+                //pha
+                //plp
+                rts
+
+}
+
+byte get_tod_clock_tenth_secs() {
+	byte ch,cm,cs,cts
+	cts=(tod_clock_tenth_secs & %00011111)
+	cs=tod_clock_seconds
+	cm=tod_clock_minutes
+	ch=tod_clock_hours
+	return cts
+}
+
+void clear_tod_clock() {
+	tod_clock_hours=0
+	tod_clock_minutes=0
+	tod_clock_seconds=0
+	tod_clock_tenth_secs=0
+}
+
+macro asm void deactivate_ints() {
+	sei
+}
+
+macro asm void activate_ints() {
+	cli
+}
+
+const byte overhead=19			//cycles takes up by measuring code
+//array(byte) printout[16]
+
+array(byte) cycles[4]
+byte locycles,vald015,vald011,statusreg
+
+//segment(chrrom) 
+const array charset @ $3800 = file("dungeon-multi-charset.bin", 0)
+const array sprite @ $3600 = file("roguelike-sprites.bin",0)
+
